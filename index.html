@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#090b0e">
+    <meta name="description" content="A large, private, Bluetooth heart-rate display for your treadmill.">
+    <title>Pulse — treadmill heart rate</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23090b0e'/%3E%3Cpath d='M12 33h10l5-15 10 29 5-14h10' fill='none' stroke='%23ff7969' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+    <style>
+:root {
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #f3f4f6;
+  background: #090b0e;
+  --accent: #ff7969;
+  --muted: #929ba8;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+button { font: inherit; cursor: pointer; }
+button:disabled { opacity: .5; cursor: default; }
+button:focus-visible { outline: 3px solid #fff; outline-offset: 4px; }
+[hidden] { display: none !important; }
+.screen {
+  height: 100vh;
+  height: 100svh;
+  min-height: 320px;
+  padding: max(20px, env(safe-area-inset-top)) max(28px, env(safe-area-inset-right))
+    max(20px, env(safe-area-inset-bottom)) max(28px, env(safe-area-inset-left));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+}
+header, .brand, nav, footer, .actions { display: flex; align-items: center; }
+header, footer { justify-content: space-between; gap: 16px; }
+.brand { gap: 12px; font-size: 15px; font-weight: 750; letter-spacing: .15em; }
+.brand svg { width: 35px; height: 28px; fill: none; stroke: var(--accent); stroke-width: 2.5; }
+.tagline { color: var(--muted); font-size: 10px; font-weight: 500; letter-spacing: .13em; margin-left: 12px; }
+nav, .actions { gap: 10px; }
+button { border-radius: 10px; min-height: 46px; padding: 12px 20px; font-size: 14px; font-weight: 650; border: 1px solid transparent; }
+.quiet { color: var(--muted); background: transparent; padding: 10px 12px; }
+.quiet:hover { color: #fff; background: #181d24; }
+.primary { color: #17100e; background: var(--accent); }
+.primary:hover:not(:disabled) { background: #ff998c; }
+.primary span { margin-left: 20px; }
+.secondary { color: #d7dce3; background: #171b21; border-color: #303641; }
+.secondary:hover { background: #242b35; }
+main { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 0; }
+.status-row { display: flex; align-items: center; gap: 9px; font-size: 13px; color: #c3cbd5; }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: #707a88; flex-shrink: 0; }
+body[data-state="live"] .status-dot { background: #84e0b4; }
+body[data-state="demo"] .status-dot { background: #eacb74; }
+body[data-state="stale"] .status-dot, body[data-state="error"] .status-dot { background: var(--accent); }
+.reading { display: flex; align-items: baseline; justify-content: center; gap: 18px; line-height: .95; margin: 10px 0 8px; }
+#bpm {
+  font-family: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: min(53vh, calc(140vw / var(--digits, 3)));
+  font-size: min(53svh, calc(140vw / var(--digits, 3)));
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: normal;
+  inline-size: calc(var(--digits, 3) * 1ch);
+  text-align: right;
+  white-space: pre;
+}
+.unit { color: var(--muted); font-size: 16px; font-weight: 650; letter-spacing: .15em; }
+body[data-state="demo"] #bpm { color: #eacb74; }
+body[data-state="stale"] #bpm, body[data-state="error"] #bpm, body[data-state="idle"] #bpm { color: #535e6d; }
+#message { color: var(--muted); text-align: center; font-size: 13px; line-height: 1.5; margin: 4px 0; max-width: 640px; }
+footer { border-top: 1px solid #252a32; padding-top: 16px; }
+.connection { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+#device { font-size: 10px; letter-spacing: .14em; color: #b1bac7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40vw; }
+#awake-status { color: var(--muted); font-size: 11px; }
+dialog { color: #eef1f5; background: #15191f; border: 1px solid #343c48; border-radius: 18px; padding: 32px; max-width: 580px; width: calc(100% - 32px); max-height: calc(100svh - 32px); line-height: 1.65; }
+dialog::backdrop { background: rgb(0 0 0 / .8); }
+.close { float: right; margin: -16px -16px 0 12px; }
+.eyebrow { font-size: 10px; font-weight: 650; letter-spacing: .14em; color: var(--accent); }
+h1 { font-size: 28px; line-height: 1.2; margin: 12px 0 22px; }
+ol { padding-left: 22px; }
+li { padding-left: 4px; margin: 12px 0; }
+dialog p, dialog li { font-size: 14px; }
+dialog p { color: #abb5c3; }
+.privacy { border-top: 1px solid #343c48; padding-top: 16px; font-size: 12px; }
+@media (orientation: portrait) {
+  .screen { padding: max(22px, env(safe-area-inset-top)) 22px max(22px, env(safe-area-inset-bottom)); }
+  .tagline { display: none; }
+  #bpm { font-size: min(32svh, calc(120vw / var(--digits, 3))); }
+  .reading { gap: 10px; margin: 28px 0; }
+  .unit { font-size: 12px; }
+  footer { flex-direction: column; align-items: stretch; gap: 20px; }
+  .connection { text-align: center; align-items: center; }
+  #device { max-width: 80vw; }
+  .actions { justify-content: center; flex-wrap: wrap; }
+}
+@media (orientation: landscape) and (max-height: 500px) {
+  .screen { padding-top: max(10px, env(safe-area-inset-top)); padding-bottom: max(10px, env(safe-area-inset-bottom)); gap: 6px; }
+  header button { min-height: 36px; padding: 6px 12px; }
+  footer { padding-top: 10px; }
+  #bpm { font-size: min(48svh, calc(140vw / var(--digits, 3))); }
+  .reading { margin: 4px 0; }
+  .tagline { display: none; }
+}
+
+</style>
+    <script type="module">
+// Bluetooth SIG Heart Rate Measurement: flag bit 0 chooses uint8/uint16 LE;
+// bits 1 and 2 describe sensor contact. Other fields are not needed here.
+function parseHeartRate(value) {
+  let view;
+  if (value instanceof DataView) {
+    view = value;
+  } else if (value instanceof ArrayBuffer) {
+    view = new DataView(value);
+  } else if (ArrayBuffer.isView(value)) {
+    view = new DataView(value.buffer, value.byteOffset, value.byteLength);
+  } else {
+    throw new TypeError("Expected a Bluetooth measurement buffer");
+  }
+  if (view.byteLength < 2) throw new RangeError("Truncated heart-rate measurement");
+  const flags = view.getUint8(0);
+  if ((flags & 1) && view.byteLength < 3) throw new RangeError("Truncated 16-bit heart rate");
+  return {
+    bpm: flags & 1 ? view.getUint16(1, true) : view.getUint8(1),
+    contact: flags & 4 ? Boolean(flags & 2) : null,
+  };
+}
+
+const STALE_AFTER_MS = 5000;
+
+function readingState(measurement, receivedAt, now) {
+  if (!measurement || receivedAt == null) return "waiting";
+  if (now - receivedAt >= STALE_AFTER_MS) return "stale";
+  if (measurement.contact === false) return "no-contact";
+  if (measurement.bpm === 0) return "no-reading";
+  return "live";
+}
+
+
+const $ = (id) => document.getElementById(id);
+const ui = Object.fromEntries(
+  ["bpm", "status", "message", "device", "awake-status", "connect", "disconnect", "demo", "fullscreen", "help", "setup"]
+    .map((id) => [id, $(id)]),
+);
+const bluetooth = navigator.bluetooth;
+const supported = Boolean(bluetooth?.requestDevice) && window.isSecureContext;
+let mode = "idle";
+let device = null;
+let characteristic = null;
+let measurement = null;
+let receivedAt = null;
+let session = 0;
+let demoTimer = null;
+let wakeLock = null;
+let wakePending = false;
+let bluefyAwake = false;
+
+function text(element, value) {
+  // Avoid repeating live-region announcements on every timer tick.
+  if (element.textContent !== value) element.textContent = value;
+}
+
+function display(state, status, message, bpm = null) {
+  document.body.dataset.state = state;
+  text(ui.status, status);
+  text(ui.message, message);
+  text(ui.bpm, bpm == null ? "—" : String(bpm));
+  ui.bpm.setAttribute("aria-label", bpm == null ? "No heart-rate reading" : `${bpm} beats per minute`);
+  document.documentElement.style.setProperty("--digits", String(Math.max(3, String(bpm ?? "").length)));
+}
+
+function buttons() {
+  ui.connect.disabled = !supported || mode === "connecting";
+  text(ui.connect, mode === "connecting" ? "Connecting…" : "Connect Garmin ↗");
+  ui.connect.hidden = mode === "connected";
+  ui.disconnect.hidden = !["connected", "connecting"].includes(mode);
+  ui.demo.hidden = ["connected", "connecting"].includes(mode);
+  text(ui.demo, mode === "demo" ? "Stop demo" : "Try demo");
+}
+
+function idle(message = "Start Broadcast Heart Rate on your Garmin, then connect.", status = "Ready when you are") {
+  if (!supported) {
+    message = !window.isSecureContext
+      ? "Bluetooth needs HTTPS. Open the hosted page in Bluefy on iPhone."
+      : "On iPhone, open this page in Bluefy instead of Safari or Chrome.";
+    status = !window.isSecureContext ? "HTTPS required" : "Bluetooth browser needed";
+  }
+  display("idle", status, message);
+  text(ui.device, "DIRECT FROM YOUR WATCH");
+  buttons();
+}
+
+async function keepAwake() {
+  if (wakeLock || bluefyAwake || wakePending || !["connected", "demo"].includes(mode) || document.visibilityState !== "visible") return;
+  wakePending = true;
+  try {
+    // Bluefy advertises this native extension in its API/version history.
+    if (typeof bluetooth?.setScreenDimEnabled === "function") {
+      try {
+        await bluetooth.setScreenDimEnabled(false);
+        if (["connected", "demo"].includes(mode) && document.visibilityState === "visible") {
+          bluefyAwake = true;
+          text(ui["awake-status"], "Screen staying awake · keep Bluefy open");
+          return;
+        }
+        await bluetooth.setScreenDimEnabled(true);
+        return;
+      } catch {
+        // Fall through to the standard browser API if the extension fails.
+      }
+    }
+    if (!navigator.wakeLock?.request) {
+      text(ui["awake-status"], "Wake lock unavailable · check iPhone Auto-Lock");
+      return;
+    }
+    const lock = await navigator.wakeLock.request("screen");
+    if (!["connected", "demo"].includes(mode) || document.visibilityState !== "visible") {
+      await lock.release();
+      return;
+    }
+    wakeLock = lock;
+    text(ui["awake-status"], "Screen staying awake · keep Bluefy open");
+    lock.addEventListener("release", () => {
+      if (wakeLock === lock) {
+        wakeLock = null;
+        text(ui["awake-status"], ["connected", "demo"].includes(mode)
+          ? "Screen may sleep · check iPhone Auto-Lock"
+          : "No account. No uploads.");
+      }
+    });
+  } catch {
+    if (["connected", "demo"].includes(mode)) {
+      text(ui["awake-status"], "Wake lock unavailable · check iPhone Auto-Lock");
+    }
+  } finally {
+    wakePending = false;
+  }
+}
+
+function releaseAwake() {
+  if (bluefyAwake) {
+    bluefyAwake = false;
+    try {
+      Promise.resolve(bluetooth.setScreenDimEnabled(true)).catch(() => {});
+    } catch { /* The browser may already be shutting down. */ }
+  }
+  const lock = wakeLock;
+  wakeLock = null;
+  if (lock) lock.release().catch(() => {});
+  text(ui["awake-status"], "No account. No uploads.");
+}
+
+function renderReading() {
+  if (mode !== "connected") return;
+  const state = readingState(measurement, receivedAt, performance.now());
+  if (document.visibilityState !== "visible") {
+    display("stale", "Page in background", "Return to Bluefy and wait for a fresh reading.");
+  } else if (state === "live") {
+    display("live", "Live heart rate", " ", measurement.bpm);
+  } else if (state === "stale") {
+    display("stale", "Signal lost", "No fresh reading for 5 seconds. Check your watch and broadcasting.");
+  } else if (state === "no-contact") {
+    display("stale", "Check watch contact", "Keep the watch snugly on your wrist.");
+  } else if (state === "no-reading") {
+    display("stale", "No heart-rate reading", "The watch is connected but is not reporting a heart rate.");
+  } else {
+    display("waiting", "Connected · waiting for heart rate", "Keep Broadcast Heart Rate running on your watch.");
+  }
+}
+
+function onMeasurement(event) {
+  if (mode !== "connected") return;
+  try {
+    measurement = parseHeartRate(event.target.value);
+    receivedAt = performance.now();
+  } catch {
+    measurement = null;
+    receivedAt = null;
+    display("error", "Unreadable sensor data", "Waiting for a valid Bluetooth heart-rate measurement.");
+    return;
+  }
+  renderReading();
+}
+
+function cleanUp() {
+  session += 1; // Invalidate pending connection steps before releasing resources.
+  clearInterval(demoTimer);
+  demoTimer = null;
+  if (characteristic) characteristic.removeEventListener("characteristicvaluechanged", onMeasurement);
+  characteristic = null;
+  if (device) {
+    device.removeEventListener("gattserverdisconnected", onDisconnected);
+    if (device.gatt?.connected) device.gatt.disconnect();
+  }
+  device = null;
+  measurement = null;
+  receivedAt = null;
+  mode = "idle";
+  releaseAwake();
+}
+
+function onDisconnected() {
+  cleanUp();
+  idle("The Bluetooth connection ended. Check broadcasting, then tap Connect Garmin.", "Watch disconnected");
+}
+
+// Bound each GATT operation; a late connection is also explicitly disconnected.
+function withTimeout(operation, milliseconds = 15000) {
+  let timer;
+  return Promise.race([
+    operation,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("Bluetooth timed out. Check broadcasting and try again.")), milliseconds);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+async function connect() {
+  if (!supported || ["connecting", "connected"].includes(mode)) return;
+  cleanUp();
+  mode = "connecting";
+  const attempt = session;
+  let selected = null;
+  buttons();
+  display("waiting", "Choose your Garmin", "Select the watch broadcasting the Heart Rate service.");
+  try {
+    // Keep requestDevice directly in the click handler's activation chain.
+    selected = await bluetooth.requestDevice({ filters: [{ services: ["heart_rate"] }] });
+    if (attempt !== session) return;
+    device = selected;
+    device.addEventListener("gattserverdisconnected", onDisconnected);
+    display("waiting", "Connecting to watch", "Starting live heart-rate notifications…");
+    const connecting = selected.gatt.connect();
+    connecting.then(() => {
+      if (attempt !== session) selected.gatt.disconnect();
+    }, () => {});
+    const server = await withTimeout(connecting);
+    if (attempt !== session) return;
+    const service = await withTimeout(server.getPrimaryService("heart_rate"));
+    if (attempt !== session) return;
+    const sensor = await withTimeout(service.getCharacteristic("heart_rate_measurement"));
+    if (attempt !== session) return;
+    characteristic = sensor;
+    characteristic.addEventListener("characteristicvaluechanged", onMeasurement);
+    mode = "connected"; // Some devices emit their first value during subscription.
+    await withTimeout(characteristic.startNotifications());
+    if (attempt !== session) return;
+    text(ui.device, device.name || "GARMIN · BLUETOOTH");
+    buttons();
+    renderReading();
+    void keepAwake();
+  } catch (error) {
+    if (attempt !== session) return;
+    cleanUp();
+    if (selected?.gatt?.connected) selected.gatt.disconnect();
+    if (error.name === "NotFoundError") {
+      idle("No watch selected. Check Broadcast Heart Rate on the watch, then try again.");
+    } else {
+      const message = error.name === "SecurityError" || error.name === "NotAllowedError"
+        ? "Allow Bluetooth access in Bluefy and iPhone Settings, then try again."
+        : error.message || "Check Bluetooth and Broadcast Heart Rate, then try again.";
+      buttons();
+      display("error", "Could not connect", message);
+    }
+  }
+}
+
+function toggleDemo() {
+  const wasDemo = mode === "demo";
+  cleanUp();
+  if (wasDemo) return idle();
+  mode = "demo";
+  let tick = 0;
+  const update = () => display("demo", "DEMO · not your heart rate", "Simulated data. Connect your Garmin for a real reading.", 128 + Math.round(7 * Math.sin(tick++ / 5)));
+  update();
+  demoTimer = setInterval(update, 1000);
+  text(ui.device, "SIMULATED SENSOR · PREVIEW ONLY");
+  buttons();
+  void keepAwake();
+}
+
+ui.connect.addEventListener("click", () => void connect());
+ui.disconnect.addEventListener("click", () => {
+  cleanUp();
+  idle();
+});
+ui.demo.addEventListener("click", toggleDemo);
+ui.help.addEventListener("click", () => ui.setup.showModal());
+ui.fullscreen.hidden = !document.fullscreenEnabled;
+ui.fullscreen.addEventListener("click", async () => {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen();
+  } catch {
+    text(ui.message, "Full screen is unavailable here. Rotate your phone to landscape.");
+  }
+});
+document.addEventListener("fullscreenchange", () => text(ui.fullscreen, document.fullscreenElement ? "Exit full screen" : "Full screen"));
+document.addEventListener("visibilitychange", () => {
+  // Never reuse a pre-background reading, even if the timer was suspended.
+  if (mode === "connected") {
+    measurement = null;
+    receivedAt = null;
+    renderReading();
+  }
+  if (document.visibilityState === "visible") void keepAwake();
+  else releaseAwake();
+});
+window.addEventListener("pagehide", () => { cleanUp(); idle(); });
+setInterval(renderReading, 500);
+idle();
+
+</script>
+  </head>
+  <body data-state="idle">
+    <div class="screen">
+      <header>
+        <div class="brand">
+          <svg viewBox="0 0 40 32" aria-hidden="true"><path d="M2 17h9l5-13 9 25 5-12h8"/></svg>
+          <span>PULSE</span>
+          <span class="tagline">JUST YOUR HEART RATE.</span>
+        </div>
+        <nav aria-label="Display controls">
+          <button id="fullscreen" class="quiet" type="button" hidden>Full screen</button>
+          <button id="help" class="quiet" type="button">Setup</button>
+        </nav>
+      </header>
+
+      <main>
+        <div class="status-row">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="status" role="status">Ready when you are</span>
+        </div>
+        <div class="reading" aria-label="Heart rate display">
+          <span id="bpm" aria-label="No heart-rate reading">—</span>
+          <span class="unit">BPM</span>
+        </div>
+        <p id="message">Start Broadcast Heart Rate on your Garmin, then connect.</p>
+      </main>
+
+      <footer>
+        <div class="connection">
+          <span id="device">DIRECT FROM YOUR WATCH</span>
+          <span id="awake-status">No account. No uploads.</span>
+        </div>
+        <div class="actions">
+          <button id="demo" class="secondary" type="button">Try demo</button>
+          <button id="connect" class="primary" type="button">Connect Garmin <span aria-hidden="true">↗</span></button>
+          <button id="disconnect" class="secondary" type="button" hidden>Disconnect</button>
+        </div>
+      </footer>
+    </div>
+
+    <dialog id="setup" aria-labelledby="setup-title">
+      <form method="dialog"><button class="quiet close" aria-label="Close setup">✕</button></form>
+      <span class="eyebrow">FĒNIX 6 PRO + IPHONE</span>
+      <h1 id="setup-title">Watch → phone. That's it.</h1>
+      <ol>
+        <li>Open this page over <strong>HTTPS in Bluefy</strong>, the Web BLE browser for iPhone. Safari and Chrome on iPhone cannot receive this Bluetooth data.</li>
+        <li>On your Garmin, open the <strong>heart-rate widget</strong>, hold <strong>MENU</strong>, choose <strong>Heart Rate Options → Broadcast Heart Rate</strong>, then press <strong>START</strong>.</li>
+        <li>Tap <strong>Connect Garmin</strong> here, select your watch, and allow Bluetooth access when prompted.</li>
+        <li>Turn the phone sideways and keep Bluefy in the foreground. Keep the watch on your wrist.</li>
+      </ol>
+      <p>If the watch is not listed, check that broadcasting is active and the watch's software is up to date. A Bluetooth-only phone cannot receive an ANT+-only broadcast.</p>
+      <p>Screen wake lock is requested while connected. If it is unavailable, temporarily change iPhone Auto-Lock for your workout, then restore it afterward. Leaving this page can interrupt readings.</p>
+      <p class="privacy">Your heart-rate data stays in this page. Nothing is stored or uploaded. This is a workout display, not a medical monitor.</p>
+      <form method="dialog"><button class="primary">Got it</button></form>
+    </dialog>
+  </body>
+</html>
