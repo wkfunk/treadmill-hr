@@ -17,33 +17,40 @@
 :root {
   color-scheme: dark;
   color: #f3f4f6;
-  background: #090b0e;
+  --surface: #090b0e;
+  background: var(--surface);
 }
 body {
   position: fixed;
   inset: 0;
   margin: 0;
-  padding: env(safe-area-inset-top) env(safe-area-inset-right)
-    env(safe-area-inset-bottom) env(safe-area-inset-left);
+  /* Keep clear of the notch at the sides; use the full height. */
+  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
   display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
   overflow: hidden;
-  /* Lets #bpm size itself in cqw/cqh: the screen minus the safe areas. */
+  /* Lets the number size itself in cqw/cqh: the screen minus the notch areas. */
   container-type: size;
 }
+#number, #history { grid-area: 1 / 1; }
+/* The viewBox is exactly the ink of the digits, at a font size of 100: each
+   Roboto Mono glyph advances 60, the outer 5 on each side is always blank, and
+   a digit is 73.1 tall. The box is stretched to fill the height of the screen,
+   which squeezes the digits narrower when they would be too wide to fit. */
+#number {
+  --shape: calc((60 * var(--digits, 3) - 10) / 73.1); /* Width over height, unsqueezed. */
+  --squeeze: 0.75; /* Never narrower than this, so a tall screen does not stretch them. */
+  width: min(100cqw, 100cqh * var(--shape));
+  height: min(100cqh, 100cqw / (var(--shape) * var(--squeeze)));
+}
 #bpm {
-  font-family: "Roboto Mono", ui-monospace, monospace;
-  font-weight: 700;
-  /* Roboto Mono: each glyph advances 0.6em; --cap is the height of a digit. */
-  --cap: 0.75;
-  font-size: min(100cqw / (0.6 * var(--digits, 3)), 100cqh / var(--cap));
-  /* A line box as tall as a digit, so the box never outgrows the screen. */
-  line-height: var(--cap);
-  /* The digits sit slightly below the middle of their line box. */
-  translate: 0 -0.033em;
-  inline-size: calc(var(--digits, 3) * 1ch);
-  text-align: right;
-  white-space: pre;
+  font: 700 100px "Roboto Mono", ui-monospace, monospace;
+  /* Right-aligned, so a two-digit reading keeps its place. */
+  text-anchor: end;
+  fill: currentColor;
+  /* Slightly see-through, so the line behind shows through the digits. */
+  opacity: 0.8;
 }
 body[data-state="idle"] #bpm, body[data-state="waiting"] #bpm { color: #535e6d; }
 body[data-state="waiting"] #bpm { animation: pulse 1s ease-in-out infinite alternate; }
@@ -53,6 +60,39 @@ body[data-state="stale"] #bpm, body[data-state="error"] #bpm { color: #ff7969; }
 @media (prefers-reduced-motion: reduce) {
   body[data-state="waiting"] #bpm { animation: none; }
 }
+/* The last five minutes, drawn behind the digits: oldest on the left, now on
+   the right. It stays in the band the digits occupy, so a tall phone does not
+   stretch it. */
+#history {
+  position: relative;
+  justify-self: stretch;
+  height: min(88cqh, 50cqw);
+  margin-right: 16px;
+}
+#history svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+#line, #now { --series: #3987e5; }
+#line {
+  fill: none;
+  stroke: var(--series);
+  stroke-width: 3;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+/* The current reading. It alone stays in front, or the last digit hides it. */
+#now {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  left: 100%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--series);
+  box-shadow: 0 0 0 3px var(--surface);
+  translate: -50% -50%;
+}
+body:not([data-state="live"], [data-state="demo"]) #now { display: none; }
 /* The whole screen is the only control. */
 #screen {
   position: fixed;
@@ -111,8 +151,41 @@ function readingState(measurement, receivedAt, now) {
   return "live";
 }
 
+const HISTORY_MS = 5 * 60 * 1000;
 
-const ui = Object.fromEntries(["bpm", "status", "screen"].map((id) => [id, document.getElementById(id)]));
+// Draws readings ({ at, bpm }, oldest first) as an SVG path in a 300 x 100
+// box: `now` is the right edge, HISTORY_MS ago the left, and higher is up.
+// `end` is where the line stops, or null when there is nothing to draw.
+function historyPath(samples, now) {
+  if (!samples.length) return { path: "", end: null };
+  const low = Math.min(...samples.map((sample) => sample.bpm));
+  const high = Math.max(...samples.map((sample) => sample.bpm));
+  // Never scale to less than a 40 bpm span, so a steady heart rate draws as a
+  // steady line and not as a mountain range.
+  const span = Math.max(40, high - low);
+  const floor = (low + high) / 2 - span / 2;
+  let path = "";
+  let end = null;
+  let run = [];
+  for (const sample of samples) {
+    // A dropout breaks the line; it is not bridged.
+    if (run.length && sample.at - run.at(-1).at >= STALE_AFTER_MS) run = [];
+    run.push(sample);
+    // Whole-number readings draw as stair steps, so the line follows the
+    // average of the last five.
+    const near = run.slice(-5);
+    const average = near.reduce((sum, other) => sum + other.bpm, 0) / near.length;
+    end = {
+      x: 300 * (1 - (now - sample.at) / HISTORY_MS),
+      y: 100 * (1 - (average - floor) / span),
+    };
+    path += `${run.length === 1 ? "M" : "L"}${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
+  }
+  return { path, end };
+}
+
+
+const ui = Object.fromEntries(["number", "bpm", "status", "screen", "line", "now"].map((id) => [id, document.getElementById(id)]));
 const bluetooth = navigator.bluetooth;
 const supported = Boolean(bluetooth?.requestDevice) && window.isSecureContext;
 let mode = "idle";
@@ -125,6 +198,13 @@ let demoTimer = null;
 let wakeLock = null;
 let wakePending = false;
 let bluefyAwake = false;
+// After a dropped connection, how long to keep trying the same watch.
+const RETRY_FOR_MS = 60000;
+const RETRY_PAUSE_MS = 2000;
+let retryUntil = 0;
+// Live readings from the last five minutes, as { at, bpm }. `at` is wall-clock
+// time, because the page timer can stop while the phone sleeps.
+const history = [];
 
 function text(element, value) {
   // Avoid repeating live-region announcements on every timer tick.
@@ -137,8 +217,20 @@ function display(state, status, bpm = null) {
   document.body.dataset.state = state;
   text(ui.status, status);
   text(ui.bpm, digits);
-  document.documentElement.style.setProperty("--digits", String(Math.max(3, digits.length)));
-  ui.screen.setAttribute("aria-label", mode === "idle" ? "Connect heart-rate sensor" : "Toggle full screen");
+  // Three character slots, or more for an implausibly large reading.
+  const slots = Math.max(3, digits.length);
+  document.documentElement.style.setProperty("--digits", String(slots));
+  ui.number.setAttribute("viewBox", `${5 - 60 * slots} 0 ${60 * slots - 10} 73.1`);
+  ui.screen.setAttribute("aria-label", choosing() ? "Connect heart-rate sensor" : "Toggle full screen");
+  drawHistory();
+}
+
+function drawHistory() {
+  const now = Date.now();
+  while (history.length && now - history[0].at > HISTORY_MS) history.shift();
+  const { path, end } = historyPath(history, now);
+  ui.line.setAttribute("d", path);
+  if (end) ui.now.style.top = `${end.y}%`;
 }
 
 function idle(status = "Tap to connect") {
@@ -146,7 +238,9 @@ function idle(status = "Tap to connect") {
   else display("error", window.isSecureContext ? "This browser has no Web Bluetooth" : "Bluetooth needs HTTPS");
 }
 
-const showing = () => ["connected", "demo"].includes(mode) && document.visibilityState === "visible";
+const showing = () => ["connected", "reconnecting", "demo"].includes(mode) && document.visibilityState === "visible";
+// A tap opens the watch picker, also while a lost watch is being retried.
+const choosing = () => ["idle", "reconnecting"].includes(mode);
 
 async function keepAwake() {
   if (wakeLock || bluefyAwake || wakePending || !showing()) return;
@@ -218,6 +312,7 @@ function onMeasurement(event) {
   try {
     measurement = parseHeartRate(event.target.value);
     receivedAt = performance.now();
+    if (readingState(measurement, receivedAt, receivedAt) === "live") history.push({ at: Date.now(), bpm: measurement.bpm });
   } catch {
     measurement = null;
     receivedAt = null;
@@ -227,24 +322,49 @@ function onMeasurement(event) {
   renderReading();
 }
 
+// Stops listening to the sensor and forgets its last reading.
+function detach() {
+  if (characteristic) characteristic.removeEventListener("characteristicvaluechanged", onMeasurement);
+  characteristic = null;
+  measurement = null;
+  receivedAt = null;
+}
+
 function cleanUp() {
   session += 1; // Invalidate pending connection steps before releasing resources.
   clearInterval(demoTimer);
   demoTimer = null;
-  if (characteristic) characteristic.removeEventListener("characteristicvaluechanged", onMeasurement);
-  characteristic = null;
+  detach();
   if (device) {
     device.removeEventListener("gattserverdisconnected", onDisconnected);
-    if (device.gatt?.connected) device.gatt.disconnect();
+    // Also abandons a connection attempt that is still pending.
+    device.gatt?.disconnect();
   }
   device = null;
-  measurement = null;
-  receivedAt = null;
   mode = "idle";
   releaseAwake();
 }
 
-function onDisconnected() {
+// The watch dropped the connection. Connecting again to a watch that was
+// already chosen needs no tap, so keep trying it for a while before giving up.
+async function onDisconnected() {
+  const target = device;
+  const attempt = ++session; // Invalidate whatever the lost connection was doing.
+  retryUntil = Date.now() + RETRY_FOR_MS;
+  while (Date.now() < retryUntil) {
+    detach();
+    mode = "reconnecting";
+    display("waiting", "Reconnecting to watch");
+    try {
+      await open(target, attempt);
+      return;
+    } catch {
+      if (attempt !== session) return;
+      target.gatt.disconnect(); // Abandon a connection attempt that is still pending.
+    }
+    await new Promise((resolve) => setTimeout(resolve, RETRY_PAUSE_MS));
+    if (attempt !== session) return;
+  }
   cleanUp();
   idle("Watch disconnected");
 }
@@ -258,6 +378,27 @@ function withTimeout(operation, milliseconds = 15000) {
       timer = setTimeout(() => reject(new Error("Bluetooth timed out")), milliseconds);
     }),
   ]).finally(() => clearTimeout(timer));
+}
+
+// Connects to a chosen watch and starts its heart-rate notifications.
+async function open(target, attempt) {
+  const connecting = target.gatt.connect();
+  connecting.then(() => {
+    if (attempt !== session) target.gatt.disconnect();
+  }, () => {});
+  const server = await withTimeout(connecting);
+  if (attempt !== session) return;
+  const service = await withTimeout(server.getPrimaryService("heart_rate"));
+  if (attempt !== session) return;
+  const sensor = await withTimeout(service.getCharacteristic("heart_rate_measurement"));
+  if (attempt !== session) return;
+  characteristic = sensor;
+  characteristic.addEventListener("characteristicvaluechanged", onMeasurement);
+  mode = "connected"; // Some devices emit their first value during subscription.
+  await withTimeout(characteristic.startNotifications());
+  if (attempt !== session) return;
+  renderReading();
+  void keepAwake();
 }
 
 async function connect() {
@@ -274,27 +415,10 @@ async function connect() {
     device = selected;
     device.addEventListener("gattserverdisconnected", onDisconnected);
     display("waiting", "Connecting to watch");
-    const connecting = selected.gatt.connect();
-    connecting.then(() => {
-      if (attempt !== session) selected.gatt.disconnect();
-    }, () => {});
-    const server = await withTimeout(connecting);
-    if (attempt !== session) return;
-    const service = await withTimeout(server.getPrimaryService("heart_rate"));
-    if (attempt !== session) return;
-    const sensor = await withTimeout(service.getCharacteristic("heart_rate_measurement"));
-    if (attempt !== session) return;
-    characteristic = sensor;
-    characteristic.addEventListener("characteristicvaluechanged", onMeasurement);
-    mode = "connected"; // Some devices emit their first value during subscription.
-    await withTimeout(characteristic.startNotifications());
-    if (attempt !== session) return;
-    renderReading();
-    void keepAwake();
+    await open(selected, attempt);
   } catch (error) {
     if (attempt !== session) return;
     cleanUp();
-    if (selected?.gatt?.connected) selected.gatt.disconnect();
     if (error.name === "NotFoundError") idle("No watch selected");
     else display("error", "Could not connect");
   }
@@ -303,8 +427,15 @@ async function connect() {
 // Opened with ?demo, the page shows simulated data in its own color.
 function demo() {
   mode = "demo";
+  const bpm = (tick) => Math.round(135 + 12 * Math.sin(tick / 45) + 3 * Math.sin(tick / 7));
+  // Start with the chart already full.
+  const start = Date.now();
+  for (let tick = -299; tick < 0; tick++) history.push({ at: start + tick * 1000, bpm: bpm(tick) });
   let tick = 0;
-  const update = () => display("demo", "Demo, not your heart rate", 128 + Math.round(7 * Math.sin(tick++ / 5)));
+  const update = () => {
+    history.push({ at: Date.now(), bpm: bpm(tick) });
+    display("demo", "Demo, not your heart rate", bpm(tick++));
+  };
   update();
   demoTimer = setInterval(update, 1000);
   void keepAwake();
@@ -319,7 +450,7 @@ async function toggleFullscreen() {
 }
 
 ui.screen.addEventListener("click", () => {
-  if (mode === "idle") void connect();
+  if (choosing()) void connect();
   else if (mode !== "connecting") void toggleFullscreen();
 });
 document.addEventListener("visibilitychange", () => {
@@ -329,18 +460,31 @@ document.addEventListener("visibilitychange", () => {
     receivedAt = null;
     renderReading();
   }
-  if (document.visibilityState === "visible") void keepAwake();
-  else releaseAwake();
+  if (document.visibilityState === "visible") {
+    // A phone that slept gets the full retry time again when it wakes.
+    if (mode === "reconnecting") retryUntil = Date.now() + RETRY_FOR_MS;
+    void keepAwake();
+  } else {
+    releaseAwake();
+  }
 });
 window.addEventListener("pagehide", () => { cleanUp(); idle(); });
-setInterval(renderReading, 500);
+// The chart keeps scrolling when no readings arrive.
+setInterval(() => {
+  renderReading();
+  drawHistory();
+}, 500);
 if (new URLSearchParams(location.search).has("demo")) demo();
 else idle();
 
 </script>
   </head>
   <body data-state="idle">
-    <span id="bpm">---</span>
+    <div id="history" aria-hidden="true">
+      <svg viewBox="0 0 300 100" preserveAspectRatio="none"><path id="line"></path></svg>
+      <i id="now"></i>
+    </div>
+    <svg id="number" viewBox="-175 0 170 73.1" preserveAspectRatio="none"><text id="bpm" y="72.1">---</text></svg>
     <p id="status" role="status"></p>
     <button id="screen" type="button"></button>
   </body>
